@@ -3,5 +3,6 @@
 #![feature(const_option)]
 
 pub mod lcg;
+pub mod radix_naive;
 pub mod scheduler;
 pub mod splitters;

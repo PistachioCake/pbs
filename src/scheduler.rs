@@ -287,9 +287,9 @@ impl<'a> Scheduler<'a> {
             // multiple times
             if let Bucket::Unsplit(ref mut unsplit) = *child {
                 // if we don't need this "{ix}", then we can remove the `.enumerate()` from `stack`
-                let shift: u8 = 64 - 8 * (level as u8 + 1);
+                let shift = (8 - level as u8) * 8;
                 bucket_id = (bucket_id & !(0xFF << shift)) | ((ix as u64) << shift);
-                eprint!("\r{bucket_id:#016x}, Splitting L{level} bucket {ix}");
+                eprint!("\r{bucket_id:#018x}, Splitting L{level} bucket {ix}");
 
                 match unsplit.slices[..] {
                     [] => {

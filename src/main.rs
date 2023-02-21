@@ -1,4 +1,4 @@
-#![feature(new_uninit, maybe_uninit_array_assume_init, maybe_uninit_slice)]
+#![feature(new_uninit)]
 
 use std::{
     cmp::Ordering,
@@ -7,6 +7,7 @@ use std::{
 
 use pbs::{
     lcg::LCG,
+    radix_naive::radix_sort,
     scheduler::{Scheduler, MAX_LEVEL_SPLIT, SLICE_SIZE_BYTES},
     splitters::ScalarSplitter,
 };
@@ -16,6 +17,32 @@ const BUF_SIZE_BYTES: usize = 1 << 30;
 const BUF_SIZE: usize = BUF_SIZE_BYTES / size_of::<u64>();
 
 fn main() {
+    _main_test2();
+}
+
+fn _main_test2() {
+    let mut lcg = LCG::new();
+
+    let buf = {
+        let mut buf = Box::new_uninit_slice(BUF_SIZE);
+        for el in buf.iter_mut() {
+            el.write(lcg.next());
+        }
+        unsafe { buf.assume_init() }
+    };
+
+    let mut buf = std::hint::black_box(buf);
+
+    eprintln!("Splitting");
+    radix_sort(&mut buf);
+    eprintln!("Done splitting");
+
+    let buf = std::hint::black_box(buf);
+
+    assert!(check_split(&buf, 64));
+}
+
+fn _main_test1() {
     let mut lcg = LCG::new();
     /*
      * THIS IS NOT PROPERLY ALIGNED!!
@@ -27,7 +54,7 @@ fn main() {
     //     }
     //     unsafe { buf.assume_init() }
     // };
-    let mut buf: &mut [u64] = {
+    let buf: Box<[u64]> = {
         // must have at least SLICE_SIZE_BYTES alignment!
         let ptr = unsafe {
             std::alloc::alloc(
@@ -35,14 +62,14 @@ fn main() {
                     .expect("BUF_SIZE_BYTES and SLICE_SIZE_BYTES should be powers of two"),
             )
         } as *mut MaybeUninit<_>;
-        let buf = unsafe { std::slice::from_raw_parts_mut(ptr, BUF_SIZE) };
+        let mut buf = unsafe { Box::from_raw(std::slice::from_raw_parts_mut(ptr, BUF_SIZE)) };
         for el in buf.iter_mut() {
             el.write(lcg.next());
         }
-        unsafe { MaybeUninit::slice_assume_init_mut(buf) }
+        unsafe { buf.assume_init() }
     };
 
-    let mut output: &mut [u64] = {
+    let output: Box<[u64]> = {
         // must have at least SLICE_SIZE_BYTES alignment!
         let ptr = unsafe {
             std::alloc::alloc(
@@ -50,12 +77,14 @@ fn main() {
                     .expect("BUF_SIZE_BYTES and SLICE_SIZE_BYTES should be powers of two"),
             )
         } as *mut MaybeUninit<_>;
-        let buf = unsafe { std::slice::from_raw_parts_mut(ptr, BUF_SIZE) };
+        let mut buf = unsafe { Box::from_raw(std::slice::from_raw_parts_mut(ptr, BUF_SIZE)) };
         for el in buf.iter_mut() {
             el.write(0);
         }
-        unsafe { MaybeUninit::slice_assume_init_mut(buf) }
+        unsafe { buf.assume_init() }
     };
+
+    let (mut buf, mut output) = std::hint::black_box((buf, output));
 
     let mut sched = Scheduler::new();
     let mut splitter = ScalarSplitter::default();
@@ -64,9 +93,11 @@ fn main() {
     sched.split(&mut buf, &mut output, &mut splitter);
     eprintln!("Done splitting");
 
-    let splits = sched.get_splits();
+    let (_buf, output) = std::hint::black_box((buf, output));
 
-    assert!(check_split(output, 8 * MAX_LEVEL_SPLIT));
+    // let splits = sched.get_splits();
+
+    assert!(check_split(&output, 8 * MAX_LEVEL_SPLIT));
 }
 
 fn check_split(buf: &[u64], num_bits: u8) -> bool {
