@@ -1,4 +1,6 @@
 #![feature(new_uninit)]
+#![feature(const_result_drop)]
+#![feature(const_option)]
 
 use std::{
     cmp::Ordering,
@@ -13,11 +15,11 @@ use pbs::{
 };
 
 // number of u64 in one GB (power of two)
-const BUF_SIZE_BYTES: usize = 1 << 30;
+const BUF_SIZE_BYTES: usize = 1 << 20;
 const BUF_SIZE: usize = BUF_SIZE_BYTES / size_of::<u64>();
 
 fn main() {
-    _main_test2();
+    _main_test1();
 }
 
 fn _main_test2() {
@@ -43,6 +45,10 @@ fn _main_test2() {
 }
 
 fn _main_test1() {
+    const BUF_LAYOUT: std::alloc::Layout =
+        std::alloc::Layout::from_size_align(BUF_SIZE_BYTES, SLICE_SIZE_BYTES)
+            .ok()
+            .expect("BUF_SIZE_BYTES and SLICE_SIZE_BYTES should be powers of two");
     let mut lcg = LCG::new();
     /*
      * THIS IS NOT PROPERLY ALIGNED!!
@@ -56,12 +62,7 @@ fn _main_test1() {
     // };
     let buf: Box<[u64]> = {
         // must have at least SLICE_SIZE_BYTES alignment!
-        let ptr = unsafe {
-            std::alloc::alloc(
-                std::alloc::Layout::from_size_align(BUF_SIZE_BYTES, SLICE_SIZE_BYTES)
-                    .expect("BUF_SIZE_BYTES and SLICE_SIZE_BYTES should be powers of two"),
-            )
-        } as *mut MaybeUninit<_>;
+        let ptr = unsafe { std::alloc::alloc(BUF_LAYOUT) } as *mut MaybeUninit<_>;
         let mut buf = unsafe { Box::from_raw(std::slice::from_raw_parts_mut(ptr, BUF_SIZE)) };
         for el in buf.iter_mut() {
             el.write(lcg.next());
@@ -71,12 +72,7 @@ fn _main_test1() {
 
     let output: Box<[u64]> = {
         // must have at least SLICE_SIZE_BYTES alignment!
-        let ptr = unsafe {
-            std::alloc::alloc(
-                std::alloc::Layout::from_size_align(BUF_SIZE_BYTES, SLICE_SIZE_BYTES)
-                    .expect("BUF_SIZE_BYTES and SLICE_SIZE_BYTES should be powers of two"),
-            )
-        } as *mut MaybeUninit<_>;
+        let ptr = unsafe { std::alloc::alloc(BUF_LAYOUT) } as *mut MaybeUninit<_>;
         let mut buf = unsafe { Box::from_raw(std::slice::from_raw_parts_mut(ptr, BUF_SIZE)) };
         for el in buf.iter_mut() {
             el.write(0);
@@ -93,11 +89,17 @@ fn _main_test1() {
     sched.split(&mut buf, &mut output, &mut splitter);
     eprintln!("Done splitting");
 
-    let (_buf, output) = std::hint::black_box((buf, output));
+    let (buf, output) = std::hint::black_box((buf, output));
 
     // let splits = sched.get_splits();
 
     assert!(check_split(&output, 8 * MAX_LEVEL_SPLIT));
+
+    // we cannot let the Box free its data, since we alloced the memory ourselves
+    unsafe {
+        std::alloc::dealloc(Box::<[u64]>::into_raw(buf) as *mut u8, BUF_LAYOUT);
+        std::alloc::dealloc(Box::<[u64]>::into_raw(output) as *mut u8, BUF_LAYOUT);
+    }
 }
 
 fn check_split(buf: &[u64], num_bits: u8) -> bool {

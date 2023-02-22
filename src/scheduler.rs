@@ -1,4 +1,4 @@
-use std::alloc::Layout;
+use std::alloc::{dealloc, Layout};
 use std::marker::PhantomData;
 use std::mem::{size_of, swap};
 
@@ -33,12 +33,17 @@ pub struct ActiveSlices<'a> {
 }
 
 pub struct Scheduler<'a> {
+    allocations: Vec<*mut u64>,
     free_slices: Vec<*mut u64>,
     top_level: Option<Bucket<'a>>,
     phantom: PhantomData<&'a mut u64>,
 }
 
 impl<'a> Scheduler<'a> {
+    const SLICE_LAYOUT: Layout = Layout::from_size_align(SLICE_SIZE_BYTES, SLICE_SIZE_BYTES)
+        .ok()
+        .expect("BUF_SIZE_BYTES and SLICE_SIZE_BYTES should be powers of two");
+
     fn free_slice<'b>(&'b mut self, slice: &'b mut [u64]) {
         let ptr = slice.as_mut_ptr();
         assert!(ptr.is_aligned_to(SLICE_SIZE_BYTES));
@@ -51,11 +56,7 @@ impl<'a> Scheduler<'a> {
             return ptr;
         }
 
-        const LAYOUT: Layout = Layout::from_size_align(SLICE_SIZE_BYTES, SLICE_SIZE_BYTES)
-            .ok()
-            .unwrap();
-
-        let ptr = unsafe { std::alloc::alloc(LAYOUT) as *mut u64 };
+        let ptr = unsafe { std::alloc::alloc(Self::SLICE_LAYOUT) as *mut u64 };
 
         debug_assert!((ptr as usize & (SLICE_SIZE_BYTES - 1)) == 0);
 
@@ -63,6 +64,8 @@ impl<'a> Scheduler<'a> {
             // handle_alloc_error(LAYOUT);
             panic!("Could not allocate new free slice");
         }
+        self.allocations.push(ptr);
+
         ptr
     }
 }
@@ -229,6 +232,7 @@ impl<'a> Scheduler<'a> {
     pub fn new() -> Self {
         // TODO preallocate free_slices here
         Self {
+            allocations: vec![],
             free_slices: vec![],
             top_level: None,
             phantom: PhantomData,
@@ -345,6 +349,11 @@ impl<'a> Scheduler<'a> {
 
         eprintln!();
         self.top_level = top_level;
+        self.free_slices.clear();
+
+        for slice in self.allocations.drain(..) {
+            unsafe { dealloc(slice as *mut u8, Self::SLICE_LAYOUT) };
+        }
     }
 
     pub fn get_splits(&mut self) -> Vec<&mut [u64]> {
