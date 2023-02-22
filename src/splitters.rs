@@ -1,4 +1,18 @@
-use crate::scheduler::{ActiveSlices, Scheduler, Splitter, SplittingBucket};
+use crate::scheduler::{ActiveSlices, Scheduler, SplittingBucket};
+
+pub trait Splitter<'a> {
+    fn split(
+        &mut self,
+        input: &[u64],
+        shift: u8,
+        mask: u64,
+        output: &mut ActiveSlices<'a>,
+        bucket: &mut SplittingBucket<'a>,
+        sched: &mut Scheduler<'a>,
+    );
+
+    fn split_small(&mut self, input: &[u64], output: &mut [u64]);
+}
 
 #[derive(Default)]
 pub struct ScalarSplitter;
@@ -13,7 +27,7 @@ impl<'a> Splitter<'a> for ScalarSplitter {
         bucket: &mut SplittingBucket<'a>,
         sched: &mut Scheduler<'a>,
     ) {
-        let mut num_elems = output.total_lens_of_buckets();
+        let mut num_elems = output.total_lens_of_full_buckets(bucket);
         for &key in input {
             let ix = (key >> shift) & mask;
             output.insert_element(bucket, sched, key, ix as usize);

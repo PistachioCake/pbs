@@ -5,6 +5,7 @@
 use std::{
     cmp::Ordering,
     mem::{size_of, MaybeUninit},
+    time::Instant,
 };
 
 use pbs::{
@@ -15,11 +16,11 @@ use pbs::{
 };
 
 // number of u64 in one GB (power of two)
-const BUF_SIZE_BYTES: usize = 1 << 20;
+const BUF_SIZE_BYTES: usize = 1 << 30;
 const BUF_SIZE: usize = BUF_SIZE_BYTES / size_of::<u64>();
 
 fn main() {
-    _main_test1();
+    _main_test2();
 }
 
 fn _main_test2() {
@@ -36,8 +37,16 @@ fn _main_test2() {
     let mut buf = std::hint::black_box(buf);
 
     eprintln!("Splitting");
+    let start = Instant::now();
+
     radix_sort(&mut buf);
+
+    let end = Instant::now();
     eprintln!("Done splitting");
+
+    let secs = end.duration_since(start).as_secs_f64();
+    let speed = (BUF_SIZE as f64 / (1 << 27) as f64) / secs;
+    println!("Time: {secs:.2} s, Speed: {speed:.2} GB/s");
 
     let buf = std::hint::black_box(buf);
 
@@ -86,8 +95,16 @@ fn _main_test1() {
     let mut splitter = ScalarSplitter::default();
 
     eprintln!("Splitting");
+    let start = Instant::now();
+
     sched.split(&mut buf, &mut output, &mut splitter);
+
+    let end = Instant::now();
     eprintln!("Done splitting");
+
+    let secs = end.duration_since(start).as_secs_f64();
+    let speed = (BUF_SIZE as f64 / (1 << 27) as f64) / secs;
+    println!("Time: {secs:.2} s, Speed: {speed:.2} GB/s");
 
     let (buf, output) = std::hint::black_box((buf, output));
 

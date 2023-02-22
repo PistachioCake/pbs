@@ -2,10 +2,13 @@ use std::alloc::{dealloc, Layout};
 use std::marker::PhantomData;
 use std::mem::{size_of, swap};
 
-pub const SLICE_SIZE_BYTES: usize = 0x10000;
+use crate::splitters::Splitter;
+
+pub const SLICE_SIZE_BYTES: usize = 0x10000; // 64 KB
 pub const SLICE_SIZE: usize = SLICE_SIZE_BYTES / size_of::<u64>();
-pub const NUM_BUCKETS: usize = 256;
+pub const NUM_BUCKETS: usize = 1 << 8;
 pub const MAX_LEVEL_SPLIT: u8 = 8;
+pub const USE_SMALL_SPLIT: bool = true;
 
 pub struct SplittingBucket<'a> {
     pub children: Box<[UnsplitBucket<'a>; NUM_BUCKETS]>,
@@ -220,10 +223,21 @@ impl<'a> UnsplitBucket<'a> {
     }
 }
 
-impl<'a> Into<SplitBucket<'a>> for SplittingBucket<'a> {
-    fn into(self) -> SplitBucket<'a> {
-        SplitBucket {
-            children: Box::new(self.children.map(Bucket::Unsplit)),
+impl<'a> From<SplittingBucket<'a>> for SplitBucket<'a> {
+    fn from(val: SplittingBucket<'a>) -> Self {
+        Self {
+            children: Box::new(val.children.map(Bucket::Unsplit)),
+        }
+    }
+}
+
+impl<'a> Default for Scheduler<'a> {
+    fn default() -> Self {
+        Self {
+            allocations: vec![],
+            free_slices: vec![],
+            top_level: None,
+            phantom: PhantomData,
         }
     }
 }
@@ -293,7 +307,7 @@ impl<'a> Scheduler<'a> {
                 // if we don't need this "{ix}", then we can remove the `.enumerate()` from `stack`
                 let shift = (8 - level as u8) * 8;
                 bucket_id = (bucket_id & !(0xFF << shift)) | ((ix as u64) << shift);
-                eprint!("\r{bucket_id:#018x}, Splitting L{level} bucket {ix}");
+                // eprint!("\r{bucket_id:#018x}, Splitting L{level} bucket {ix}");
 
                 match unsplit.slices[..] {
                     [] => {
@@ -301,8 +315,8 @@ impl<'a> Scheduler<'a> {
                         *child = Bucket::Sorted;
                         continue;
                     }
-                    [ref slice] => {
-                        eprint!("; finishing");
+                    [ref slice] if USE_SMALL_SPLIT => {
+                        // eprint!("; finishing");
                         splitter
                             .split_small(slice, &mut output[output_ix..output_ix + slice.len()]);
                         output_ix += slice.len();
@@ -380,18 +394,4 @@ impl<'a> Scheduler<'a> {
 
         res
     }
-}
-
-pub trait Splitter<'a> {
-    fn split(
-        &mut self,
-        input: &[u64],
-        shift: u8,
-        mask: u64,
-        output: &mut ActiveSlices<'a>,
-        bucket: &mut SplittingBucket<'a>,
-        sched: &mut Scheduler<'a>,
-    );
-
-    fn split_small(&mut self, input: &[u64], output: &mut [u64]);
 }
