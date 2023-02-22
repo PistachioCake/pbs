@@ -46,7 +46,8 @@ fn _main_test2() {
 
     let secs = end.duration_since(start).as_secs_f64();
     let speed = (BUF_SIZE as f64 / (1 << 27) as f64) / secs;
-    println!("Time: {secs:.2} s, Speed: {speed:.2} GB/s");
+    let item_speed = speed / size_of::<u64>() as f64;
+    println!("Time: {secs:.2} s, Speed: {speed:.2} GB/s = {item_speed:.2} B keys/s");
 
     let buf = std::hint::black_box(buf);
 
@@ -104,7 +105,8 @@ fn _main_test1() {
 
     let secs = end.duration_since(start).as_secs_f64();
     let speed = (BUF_SIZE as f64 / (1 << 27) as f64) / secs;
-    println!("Time: {secs:.2} s, Speed: {speed:.2} GB/s");
+    let item_speed = speed / size_of::<u64>() as f64;
+    println!("Time: {secs:.2} s, Speed: {speed:.2} GB/s = {item_speed:.2} B keys/s");
 
     let (buf, output) = std::hint::black_box((buf, output));
 
