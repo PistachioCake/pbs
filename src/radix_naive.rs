@@ -6,6 +6,9 @@ pub fn radix_sort(input: &mut Box<[u64]>) {
     // let mut lens: [[usize; 256]; 8] = [[0; 256]; 8];
     const EMPTY_BUCKET: Vec<u64> = Vec::new();
     let mut buckets: [Vec<u64>; 256] = [EMPTY_BUCKET; 256];
+    for bucket in buckets.iter_mut() {
+        bucket.reserve(((input.len() / 256) as f64 * 1.2) as usize);
+    }
     let input_len = input.len();
 
     // L0 split
@@ -27,10 +30,19 @@ pub fn radix_sort(input: &mut Box<[u64]>) {
 
     debug_assert_eq!(input_len, output.capacity());
 
+    let mut spare_buckets = vec![Vec::with_capacity(32), Vec::with_capacity(32)];
+    let mut next_input = Vec::with_capacity((2048 as f64 * 1.2) as usize);
     for buck in 0..256 {
-        let mut input = Vec::new();
-        std::mem::swap(&mut buckets[buck], &mut input);
-        radix_sort_helper(&input, &mut buckets, &mut output, 2, (buck as u64) << 56);
+        std::mem::swap(&mut buckets[buck], &mut next_input);
+        radix_sort_helper(
+            &next_input,
+            &mut buckets,
+            &mut spare_buckets,
+            &mut output,
+            2,
+            (buck as u64) << 56,
+        );
+        std::mem::swap(&mut buckets[buck], &mut next_input);
     }
 
     // lens[0] = buckets.map(|bucket| bucket.len());
@@ -45,6 +57,7 @@ pub fn radix_sort(input: &mut Box<[u64]>) {
 fn radix_sort_helper(
     input: &[u64],
     buckets: &mut [Vec<u64>; 256],
+    spare_buckets: &mut Vec<Vec<u64>>,
     output: &mut Vec<u64>,
     level: u8,
     bucket_id: u64,
@@ -57,7 +70,7 @@ fn radix_sort_helper(
         let start_ix = output.len();
         output.extend(input);
         // FIXME use sorting networks - preferably offloading sorting networks
-        output[start_ix..].sort();
+        output[start_ix..].sort_unstable();
         debug_assert_eq!(start_ix + input.len(), output.len());
         return;
     }
@@ -73,17 +86,12 @@ fn radix_sort_helper(
     let mask = 0xFF;
 
     // save these to reset the ends of buckets
-    let bucket_lens: [usize; 256] = buckets
-        .iter()
-        .map(|bucket| bucket.len())
-        // TODO prevent allocation here? Maybe the compiler does it, but not sure
-        .collect::<Vec<_>>()
-        .try_into()
-        .unwrap();
+    let bucket_lens: [usize; 256] = buckets.each_ref().map(|bucket| bucket.len());
 
     // Split these buckets
     for &key in input {
         let buck = ((key >> shift) & mask) as usize;
+        debug_assert_ne!(buckets[buck].len(), buckets[buck].capacity());
         buckets[buck].push(key);
     }
 
@@ -105,28 +113,29 @@ fn radix_sort_helper(
     // But step 2 may require resizing the Vec. If we resize the Vec we're curently splitting on, our input
     // reference becomes dangling. So instead, we replace this bucket's Vec with an empty one, saving the current
     // bucket's Vec into input. This means input contains only those elements we created in this level of splitting.
-    
-    // TODO: reserve some starting capacity here? Heuristically determine distribution?
-    let mut saved_bucket = Vec::new();
+
+    let mut saved_bucket = spare_buckets.pop().unwrap();
     for buck in 0..256 {
         let bucket_id = (bucket_id & !(0xFF << shift)) | ((buck as u64) << shift);
-        
+
         // We want to reuse allocations as much as possible. saved_bucket may have some capacity, but is empty.
         // We can place this into buckets so we don't have to deallocate this one and allocate a new one.
         debug_assert!(saved_bucket.is_empty());
+        debug_assert_ne!(saved_bucket.capacity(), 0);
         std::mem::swap(&mut buckets[buck], &mut saved_bucket);
-        radix_sort_helper(&saved_bucket[bucket_lens[buck]..], buckets, output, level + 1, bucket_id);
+        radix_sort_helper(
+            &saved_bucket[bucket_lens[buck]..],
+            buckets,
+            spare_buckets,
+            output,
+            level + 1,
+            bucket_id,
+        );
         std::mem::swap(&mut buckets[buck], &mut saved_bucket);
 
-        // TODO can maybe replace with Vec::set_len?
-        saved_bucket.truncate(bucket_lens[buck]);
+        buckets[buck].truncate(bucket_lens[buck]);
     }
-
-    buckets
-        .iter_mut()
-        .zip(bucket_lens.iter())
-        // TODO can maybe replace with Vec::set_len?
-        .for_each(|(bucket, &len)| bucket.truncate(len));
+    spare_buckets.push(saved_bucket);
 
     debug_assert_eq!(output_len_before + input.len(), output.len());
 }
